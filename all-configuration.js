@@ -1257,6 +1257,16 @@ import { url } from "inspector";
 			})
 		]
 	};
+	uglyfyJS提供了很多的选择用于配置在压缩过程中采用哪些规则：
+
+		sourceMap：是否为压缩后的代码生成对应的 Source Map，默认为不生成，开启后耗时会大大增加。一般不会把压缩后的代码的 Source Map 发送给网站用户的浏览器，而是用于内部开发人员调试线上代码时使用。
+		beautify： 是否输出可读性较强的代码，即会保留空格和制表符，默认为是，为了达到更好的压缩效果，可以设置为 false。
+		comments：是否保留代码中的注释，默认为保留，为了达到更好的压缩效果，可以设置为 false。
+		compress.warnings：是否在 UglifyJs 删除没有用到的代码时输出警告信息，默认为输出，可以设置为 false 以关闭这些作用不大的警告。
+		drop_console：是否剔除代码中所有的 console 语句，默认为不剔除。开启后不仅可以提升代码压缩效果，也可以兼容不支持 console 语句 IE 浏览器。
+		collapse_vars：是否内嵌定义了但是只用到一次的变量，例如把 var x = 5; y = x 转换成 y = 5，默认为不转换。为了达到更好的压缩效果，可以设置为 true。
+		reduce_vars： 是否提取出出现多次但是没有定义成变量去引用的静态值，例如把 x = 'Hello'; y = 'Hello' 转换成 var a = 'Hello'; x = a; y = b，默认为不转换。为了达到更好的压缩效果，可以设置为 true。
+	
 	在通过new parallelUglifyPlugin()实例化时，支持以下参数：
 		·test: 使用正则去匹配哪些文件需要被parallelUglifyPlugin压缩，默认是/.js$/,也就是默认压缩所有的.js文件 。
 		·include: 使用正则去命中需要被parallelUglifyPlugin压缩的文件。默认为[]
@@ -1274,3 +1284,150 @@ import { url } from "inspector";
 	npm i -D webpack-parallel-uglify-plugin
 
 2.5使用自动刷新
+	2.5.1. 开启模块热替换
+		要做到实时预览，除了在4-5使用自动刷新中介绍的刷新整个网页外，DevServer 还支持一种叫做模块热替换(Hot Module Replacement)的技术可在不刷新整个网页的情况下做到超灵敏的实时预览。 
+		原理是当一个源码发生变化时，只重新编译发生变化的模块，再用新输出的模块替换掉浏览器中对应的老模块。
+
+		模块热替换技术的优势有：
+		
+		实时预览反应更快，等待时间更短。
+		不刷新浏览器能保留当前网页的运行状态，例如在使用 Redux 来管理数据的应用中搭配模块热替换能做到代码更新时 Redux 中的数据还保持不变。
+		总的来说模块热替换技术很大程度上的提高了开发效率和体验。
+
+	2.5.2 模块热替换的原理
+		模块热替换的原理和自动刷新的原理类似，都需要往开发的网页中注入一个代码客户端用于连接DevServer和网页，不同在于模块热替换独特的模块替换机制.
+		DevServer默认不会开启模块热替换模式，要开启该模式，只需在启动时带上参数--hot，完整命令是webpack-dev-server --hot。
+		除了通过在启动时带上--hot参数，还可以通过接入Plugin实现，相关代码如下：
+		const HotModuleReplacementPlugin = require('webpack/lib/HotModuleReplacementPlugin');
+		module.exports = {
+			entry: {
+				// 为每个入口都注入代理客户端
+				main: ['webpack-dev-server/client?http://localhost:8000/', 'webpack/hot/dev-server', './src/main.js']
+			},
+			plugins: [
+				// 该插件的作用就是实现模块热替换，实际上当启动时带上 `--hot` 参数，会注入该插件，生成 .hot-update.json 文件。
+				new HotModuleReplacementPlugin(),
+			],
+			devServer: {
+				// 告诉 DevServer 要开启模块热替换模式
+				hot: true
+			}
+		};
+
+2.6区分环境
+	2.6.1 为什么要区分环境
+		在开发网页的时候，一般都会有多套运行环境，例如：
+
+		在开发过程中方便开发调试的环境。
+		发布到线上给用户使用的运行环境。
+		这两套不同的环境虽然都是由同一套源代码编译而来，但是代码内容却不一样，差异包括：
+		
+		线上代码被通过 4-8 压缩代码 中提到的方法压缩过。
+		开发用的代码包含一些用于提示开发者的提示日志，这些日志普通用户不可能去看它。
+		开发用的代码所连接的后端数据接口地址也可能和线上环境不同，因为要避免开发过程中造成对线上数据的影响。
+		为了尽可能的复用代码，在构建的过程中需要根据目标代码要运行的环境而输出不同的代码，我们需要一套机制在源码中去区分环境。 幸运的是 Webpack 已经为我们实现了这点。
+
+	2.6.2 如何区分环境
+		具体区分方法很简单，在源码中通过如下方式：
+		` if (proccess.env.NODE_ENV === 'production') {
+			console.log('你在线上环境');
+		} else {
+			console.log('你在开发环境');
+		} `
+		大概原理就是借助于环境变量的值去判断执行哪个分支。
+		当你的代码中出现了使用proccess模块的语句时，webpack就自动打包进proccess模块的代码以支持非Node.js的运行环境。当你的代码中没有使用proccess时就不会打包进proccess模块的代码。
+		这个注入的proccess模块的作用是为了模拟Node.js中的proccess，以支持上面使用的proccess.env.NODE_ENV === 'production'语句。
+
+		在构建线上环境代码时，需要给当前运行魂晶设置环境变量。NODE_ENV = 'production', webpack相关配置如下：
+		const DefinePlugin = require('webpack');
+		module.exports = {
+			plugins: [
+				new DefinePlugin({
+					"proccess.env": {
+						NODE_ENV: JSON.stringify('production')
+					}
+				})
+			]
+		}
+		注意在定义环境变量的值时用JSON.stringify包裹字符转的原因是环境变量的值需要是一个由双引号包裹的字符串，而JSON.stringify('production')的值正好是'"production"'
+	
+	2.6.3 压缩代码
+		压缩ES6
+			虽然当前大多数 JavaScript 引擎还不完全支持 ES6 中的新特性，但在一些特定的运行环境下已经可以直接执行 ES6 代码了，例如最新版的 Chrome、ReactNative 的引擎 JavaScriptCore。
+
+			运行 ES6 的代码相比于转换后的 ES5 代码有如下优点：
+			
+			一样的逻辑用 ES6 实现的代码量比 ES5 更少。
+			JavaScript 引擎对 ES6 中的语法做了性能优化，例如针对 const 申明的变量有更快的读取速度。
+			所以在运行环境允许的情况下，我们要尽可能的使用原生的 ES6 代码去运行，而不是转换后的 ES5 代码。
+			
+			在你用上面所讲的压缩方法去压缩 ES6 代码时，你会发现 UglifyJS 会报错退出，原因是 UglifyJS 只认识 ES5 语法的代码。 为了压缩 ES6 代码，需要使用专门针对 ES6 代码的 UglifyES。
+			
+			UglifyES 和 UglifyJS 来自同一个项目的不同分支，它们的配置项基本相同，只是接入 Webpack 时有所区别。 在给 Webpack 接入 UglifyES 时，不能使用内置的 UglifyJsPlugin，而是需要单独安装和使用最新版本的 uglifyjs-webpack-plugin。 安装方法如下：
+			
+			npm i -D uglifyjs-webpack-plugin@
+			
+			webpack的相关配置如下：
+			const UglifyESPlugin = require('uglifyjs-webpack-plugin')
+
+			module.exports = {
+			plugins: [
+				new UglifyESPlugin({
+				// 多嵌套了一层
+				uglifyOptions: {
+					compress: {
+					// 在UglifyJs删除没有用到的代码时不输出警告
+					warnings: false,
+					// 删除所有的 `console` 语句，可以兼容ie浏览器
+					drop_console: true,
+					// 内嵌定义了但是只用到一次的变量
+					collapse_vars: true,
+					// 提取出出现多次但是没有定义成变量去引用的静态值
+					reduce_vars: true,
+					},
+					output: {
+					// 最紧凑的输出
+					beautify: false,
+					// 删除所有的注释
+					comments: false,
+					}
+				}
+				})
+			]
+			}
+		同时，为了不让babel-loader输出es5语法的代码，需要去掉.babelrc配置文件中的babel-preset-env,但是其他的babel插件，比如babel-preset-react还是要保留，因为正是babel-preset-env负责把es6代码转换成es5代码。
+
+	2.6.4 压缩CSS
+			CSS代码也可以像javascript那样被压缩，以达到提升加载速度和代码混淆的作用。目前比较成熟可靠的CSS压缩工具是cssnano,基于postcss.
+			cssnano能理解CSS的含义，而不仅仅是删掉空格，例如:
+				· margin: 10px 20px 10px 20px; 被压缩成margin: 10px 20px;
+				· color: #ff0000; 被压缩成color: red;
+			还有很多压缩规则可以去其官网查看，通常压缩率能达到60%。
+			把cssnano接入到webpack中也非常简单，因为css-loader已经将其内置了，要开启cssnano去压缩代码只需要开启css-loader的minimize选项。相关配置如下：
+
+			const path = require('path');
+			const { WebPlugin } = require('web-webpack-plugin');
+
+			const ExtractTextPlugin = require('extract-text-webpack-plugin');
+
+			module.exports = {
+				module: {
+					rules: [
+						{
+							test: /\.css$/,
+							use: ExtractTextPlugin.extract({
+								use: ['css-loader?minimize']
+							})
+						}
+					]
+				},
+				plugins: [
+					new WebPlugin({
+						template: './template.html',
+						filename: 'index.html'
+					}),
+					new ExtractTextPlugin({
+						filename: '[name]_[contenthash:8].css'
+					})
+				]
+			};
