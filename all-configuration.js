@@ -1431,3 +1431,607 @@ import { url } from "inspector";
 					})
 				]
 			};
+2.7 CDN加速
+	2.7.1 什么是CDN?
+		虽然前面通过了压缩代码的手段来减少网络传输的大小，但实际上最影响用户体验的还是网页首次打开时的加载等待。导致这个问题的根本原因是网络传输过程耗时大，CDN的作用就是加速网络传输。
+		CND又叫做内容分发网络，通过把资源部署到世界各地，用户在访问时就按照就近原则从距离用户最近的服务器获取资源，从而加速资源的获取速度。CDN其实是通过优化物理链路层传输过程中的网速有限、丢包等问题来提升网速的。
+	
+	2.7.2 接入CDN
+		要给网站接入CDN，需要把网页的静态资源上传到CDN服务上去，在服务这些静态资源的时候需要通过CDN服务器提供的URL地址去访问。
+		举个例子，有一个单页应用，构建出的代码结构如下：
+			dist
+			| -- app_3984ur43.js
+			| -- app_23tfuih9.css
+			| -- arch_8wy4rhef.png
+			| -- index.html
+		其中index.html内容如下：
+		<html>
+			<head>
+			<meta charset="UTF-8">
+			<link rel="stylesheet" href="app_a6976b6d.css">
+			</head>
+			<body>
+			<div id="app"></div>
+			<script src="app_9d89c964.js"></script>
+			</body>
+		</html>
+		app_a6976b6d.css内容如下：
+		body{background:url(arch_ae805d49.png) repeat}h1{color:red}
+
+		可以看出到导入资源时都是通过相对路径去访问的，当把这些资源都放到同一个 CDN 服务上去时，网页是能正常使用的。 但需要注意的是由于 CDN 服务一般都会给资源开启很长时间的缓存，
+		例如用户从 CDN 上获取到了 index.html 这个文件后， 即使之后的发布操作把 index.html 文件给重新覆盖了，但是用户在很长一段时间内还是运行的之前的版本，这会新的导致发布不能立即生效。
+
+		要避免以上问题，业界比较成熟的做法是这样的：
+		· 针对 HTML 文件：不开启缓存，把 HTML 放到自己的服务器上，而不是 CDN 服务上，同时关闭自己服务器上的缓存。自己的服务器只提供 HTML 文件和数据接口。
+		· 针对静态的 JavaScript、CSS、图片等文件：开启 CDN 和缓存，上传到 CDN 服务上去，同时给每个文件名带上由文件内容算出的 Hash 值， 例如上面的 app_a6976b6d.css 文件。 
+			带上 Hash 值的原因是文件名会随着文件内容而变化，只要文件发生变化其对应的 URL 就会变化，它就会被重新下载，无论缓存时间有多长。
+
+		采用以上方案后，在 HTML 文件中的资源引入地址也需要换成 CDN 服务提供的地址，例如以上的 index.html 变为如下：
+
+		<html>
+			<head>
+			<meta charset="UTF-8">
+			<link rel="stylesheet" href="//cdn.com/id/app_a6976b6d.css">
+			</head>
+			<body>
+				<div id="app"></div>
+				<script src="//cdn.com/id/app_9d89c964.js"></script>
+			</body>
+		</html>
+		并且 app_a6976b6d.css 的内容也应该变为如下：
+
+		body{background:url(//cdn.com/id/arch_ae805d49.png) repeat}h1{color:red}
+		也就是说，之前的相对路径，都变成了绝对的指向 CDN 服务的 URL 地址。
+
+		如果你对形如 //cdn.com/id/app_a6976b6d.css 这样的 URL 感到陌生，你需要知道这种 URL 省掉了前面的 http: 或者 https: 前缀， 
+		这样做的好处时在访问这些资源的时候会自动的根据当前 HTML 的 URL 是采用什么模式去决定是采用 HTTP 还是 HTTPS 模式。
+
+		除此之外，如果你还知道浏览器有一个规则是同一时刻针对同一个域名的资源并行请求是有限制的话（具体数字大概4个左右，不同浏览器可能不同）， 
+		你会发现上面的做法有个很大的问题。由于所有静态资源都放到了同一个 CDN 服务的域名下，也就是上面的 cdn.com。 
+		如果网页的资源很多，例如有很多图片，就会导致资源的加载被阻塞，因为同时只能加载几个，必须等其它资源加载完才能继续加载。 
+		要解决这个问题，可以把这些静态资源分散到不同的 CDN 服务上去， 例如把 JavaScript 文件放到 js.cdn.com 域名下、把 CSS 文件放到 css.cdn.com 域名下、图片文件放到 img.cdn.com 域名下， 这样做之后 index.html 需要变成这样：
+		<html>
+			<head>
+			<meta charset="UTF-8">
+			<link rel="stylesheet" href="//css.cdn.com/id/app_a6976b6d.css">
+			</head>
+			<body>
+				<div id="app"></div>
+				<script src="//js.cdn.com/id/app_9d89c964.js"></script>
+			</body>
+		</html>
+		使用了多个域名后又会带来一个新问题：增加域名解析时间。是否采用多域名分散资源需要根据自己的需求去衡量得失。
+		 当然你可以通过在 HTML HEAD 标签中 加入 <link rel="dns-prefetch" href="//js.cdn.com"> 去预解析域名，以降低域名解析带来的延迟。
+	
+	2.7.3  用webpack实现cdn接入
+			总结上面所说的，构建需要实现如下几点：
+				· 静态资源的导入url需要编程指向CDN服务的绝对路径的URL而不是相对于html文件的url
+				· 静态资源的文件名称需要带上有文件内容计算出来的hash值，以防止被缓存。
+				· 不同类型的资源放到不同域名下的CDN服务上去，以防止资源的并行加载被阻塞。
+			先来看下要实现以上要求的最终webpack配置：
+
+			const path = require('path');
+			const ExtractTextPlugin = require('extract-text-webpack-plugin');
+			const { WebPlugin } = require('web-webpack-plugin');
+
+			module.exports = {
+				output: {
+					filename: '[name]_[chunkhash:8].js',
+					path: path.resolve(__dirname, './dist'),
+					publicPath: '//js.cdn.com/id/'
+				},
+				module: {
+					rules: [
+					  {
+						// 增加对 CSS 文件的支持
+						test: /\.css$/,
+						// 提取出 Chunk 中的 CSS 代码到单独的文件中
+						use: ExtractTextPlugin.extract({
+						  // 压缩 CSS 代码
+						  use: ['css-loader?minimize'],
+						  // 指定存放 CSS 中导入的资源（例如图片）的 CDN 目录 URL
+						  publicPath: '//img.cdn.com/id/'
+						}),
+					  },
+					  {
+						// 增加对 PNG 文件的支持
+						test: /\.png$/,
+						// 给输出的 PNG 文件名称加上 Hash 值
+						use: ['file-loader?name=[name]_[hash:8].[ext]'],
+					  },
+					  // 省略其它 Loader 配置...
+					]
+				  },
+				  plugins: [
+					// 使用 WebPlugin 自动生成 HTML
+					new WebPlugin({
+					  // HTML 模版文件所在的文件路径
+					  template: './template.html',
+					  // 输出的 HTML 的文件名称
+					  filename: 'index.html',
+					  // 指定存放 CSS 文件的 CDN 目录 URL
+					  stylePublicPath: '//css.cdn.com/id/',
+					}),
+					new ExtractTextPlugin({
+					  // 给输出的 CSS 文件名称加上 Hash 值
+					  filename: `[name]_[contenthash:8].css`,
+					}),
+					// 省略代码压缩插件配置...
+				  ],
+			};
+		以上代码中最核心的部分是通过 publicPath 参数设置存放静态资源的 CDN 目录 URL， 为了让不同类型的资源输出到不同的 CDN，需要分别在：
+		output.publicPath 中设置 JavaScript 的地址。
+		css-loader.publicPath 中设置被 CSS 导入的资源的的地址。
+		WebPlugin.stylePublicPath 中设置 CSS 文件的地址。
+		设置好 publicPath 后，WebPlugin 在生成 HTML 文件和 css-loader 转换 CSS 代码时，会考虑到配置中的 publicPath，用对应的线上地址替换原来的相对地址。
+
+2.8 使用Tree Shaking
+	Tree Shaking 可以用来剔除javascript中用不上的死代码。它依赖静态的ES6模块化语法，例如通过import 和 export 导入导出。
+	Tree Shaking最先在Rollup中出现，webpack在2.0版本将其引入。
+	为了更直观的理解它，看一个具体的例子。假如有一个文件utils.js,里面存放了很多工具函数和常量，在main.js中会导入和使用util.js,代码有如下：
+	utils.js源码：
+	export function funcA () {}
+	export function funcB () {}
+	export const a = 'a';
+
+	main.js源码:
+		import { funcA } from './utils.js';
+		funcA();
+	
+	Tree Shaking之后的util.js:
+	export function funcA () {};
+
+	由于值用到了util.js中的funcA,所以剩下的都被Tree Shaking 当做死代码给剔除了。
+	需要注意的是要让 Tree Shaking 正常工作的前提是交给 Webpack 的 JavaScript 代码必须是采用 ES6 模块化语法的， 因为 ES6 模块化语法是静态的（导入导出语句中的路径必须是静态的字符串，而且不能放入其它代码块中），这让 Webpack 可以简单的分析出哪些 export 的被 import 过了。 如果你采用 ES5 中的模块化，例如 module.export={...}、require(x+y)、if(x){require('./util')}，Webpack 无法分析出哪些代码可以剔除。
+
+	目前的 Tree Shaking 还有些的局限性，经实验发现：
+
+	不会对entry入口文件做 Tree Shaking。
+	不会对异步分割出去的代码做 Tree Shaking。
+
+	2.8.1 接入Tree Shaking
+	上面讲了 Tree Shaking 是做什么的，接下来一步步教你如何配置 Webpack 让 Tree Shaking 生效。
+
+	首先，为了把采用 ES6 模块化的代码交给 Webpack，需要配置 Babel 让其保留 ES6 模块化语句，修改 .babelrc 文件为如下：
+
+	{
+	"presets": [
+		[
+		"env",
+		{
+			"modules": false
+		}
+		]
+	]
+	}
+	其中 "modules": false 的含义是关闭 Babel 的模块转换功能，保留原本的 ES6 模块化语法。
+
+	配置好 Babel 后，重新运行 Webpack，在启动 Webpack 时带上 --display-used-exports 参数，以方便追踪 Tree Shaking 的工作， 这时你会发现在控制台中输出了如下的日志：
+
+	> webpack --display-used-exports
+	bundle.js  3.5 kB       0  [emitted]  main
+	[0] ./main.js 41 bytes {0} [built]
+	[1] ./util.js 511 bytes {0} [built]
+		[only some exports used: funcA]
+	其中 [only some exports used: funcA] 提示了 util.js 只导出了用到的 funcA，说明 Webpack 确实正确的分析出了如何剔除死代码。
+
+	但当你打开 Webpack 输出的 bundle.js 文件看下时，你会发现用不上的代码还在里面，如下：
+	/* harmony export (immutable) */
+	__webpack_exports__["a"] = funcA;
+
+	/* unused harmony export funB */
+
+	function funcA() {
+	console.log('funcA');
+	}
+
+	function funB() {
+	console.log('funcB');
+	}
+	Webpack 只是指出了哪些函数用上了哪些没用上，要剔除用不上的代码还得经过 UglifyJS 去处理一遍。 要接入 UglifyJS 也很简单，不仅可以通过4-8压缩代码中介绍的加入 UglifyJSPlugin 去实现， 
+	也可以简单的通过在启动 Webpack 时带上 --optimize-minimize 参数，为了快速验证 Tree Shaking 我们采用较简单的后者来实验下。
+
+	通过 webpack --display-used-exports --optimize-minimize 重启 Webpack 后，打开新输出的 bundle.js，内容如下：
+
+	function r() {
+	console.log("funcA")
+	}
+
+	t.a = r
+	可以看出 Tree Shaking 确实做到了，用不上的代码都被剔除了。
+
+	当你的项目使用了大量第三方库时，你会发现 Tree Shaking 似乎不生效了，原因是大部分 Npm 中的代码都是采用的 CommonJS 语法， 这导致 Tree Shaking 无法正常工作而降级处理。 
+	但幸运的时有些库考虑到了这点，这些库在发布到 Npm 上时会同时提供两份代码，一份采用 CommonJS 模块化语法，一份采用 ES6 模块化语法。 并且在 package.json 文件中分别指出这两份代码的入口。
+
+	以 redux 库为例，其发布到 Npm 上的目录结构为：
+
+	node_modules/redux
+	|-- es
+	|   |-- index.js # 采用 ES6 模块化语法
+	|-- lib
+	|   |-- index.js # 采用 ES5 模块化语法
+	|-- package.json
+	package.json 文件中有两个字段：
+
+	{
+	"main": "lib/index.js", // 指明采用 CommonJS 模块化的代码入口
+	"jsnext:main": "es/index.js" // 指明采用 ES6 模块化的代码入口
+	}
+	在2-4Resolve mainFields 中曾介绍过 mainFields 用于配置采用哪个字段作为模块的入口描述。 为了让 Tree Shaking 对 redux 生效，需要配置 Webpack 的文件寻找规则为如下：
+
+	module.exports = {
+	resolve: {
+		// 针对 Npm 中的第三方模块优先采用 jsnext:main 中指向的 ES6 模块化语法的文件
+		mainFields: ['jsnext:main', 'browser', 'main']
+	},
+	};
+	以上配置的含义是优先使用 jsnext:main 作为入口，如果不存在 jsnext:main 就采用 browser 或者 main 作为入口。 虽然并不是每个 Npm 中的第三方模块都会提供 ES6 模块化语法的代码，但对于提供了的不能放过，能优化的就优化。
+
+	目前越来越多的 Npm 中的第三方模块考虑到了 Tree Shaking，并对其提供了支持。 
+	采用 jsnext:main 作为 ES6 模块化代码的入口是社区的一个约定，假如将来你要发布一个库到 Npm 时，希望你能支持 Tree Shaking， 以让 Tree Shaking 发挥更大的优化效果，让更多的人为此受益。
+
+2.9 提取公共代码
+	2.9.1 如何提取公共代码：
+		你已经知道了提取公共代码会有什么好处，但是在实战中具体要怎么做，以达到效果最优呢？通常可以采用以下原则去为网站提取公共代码:
+			· 根据你网站所使用的技术栈，找出网站所有页面都系要用到的基础库，以采用react技术栈的网站为例，所有页面都会依赖react/react-dom等库,把他们提取到一个单独的文件。一般把这个文件叫做base.js,因为它包含所有网页的基础运行环境。
+			· 在剔除了各个页面中被 base.js 包含的部分代码外，再找出所有页面都依赖的公共部分的代码提取出来放到 common.js 中去。
+			· 再为每个网页都生成一个单独的文件，这个文件中不再包含 base.js 和 common.js 中包含的部分，而只包含各个页面单独需要的部分代码。
+
+			读到这里你可以会有疑问：既然能找出所有页面都依赖的公共代码，并提取出来放到 common.js 中去，为什么还需要再把网站所有页面都需要用到的基础库提取到 base.js 去呢？ 原因是为了长期的缓存 base.js 这个文件。
+
+			发布到线上的文件都会采用在4-9CDN加速中介绍过的方法，对静态文件的文件名都附加根据文件内容计算出 Hash 值，也就是最终 base.js 的文件名会变成 base_3b1682ac.js，以长期缓存文件。 
+			网站通常会不断的更新发布，每次发布都会导致 common.js 和各个网页的 JavaScript 文件都会因为文件内容发生变化而导致其 Hash 值被更新，也就是缓存被更新。
+
+			把所有页面都需要用到的基础库提取到 base.js 的好处在于只要不升级基础库的版本，base.js 的文件内容就不会变化，Hash 值不会被更新，缓存就不会被更新。 
+			每次发布浏览器都会使用被缓存的 base.js 文件，而不用去重新下载 base.js 文件。 由于 base.js 通常会很大，这对提升网页加速速度能起到很大的效果。
+		
+	2.9.2 如何通过 Webpack 提取公共代码
+		你已经知道如何提取公共代码，接下来教你如何用 Webpack 实现。
+		Webpack 内置了专门用于提取多个 Chunk 中公共部分的插件 CommonsChunkPlugin，CommonsChunkPlugin 大致使用方法如下：
+			const CommonsChunkPlugin = require('webpack/lib/optimize/CommonsChunkPlugin');
+			new CommonsChunkPlugin({
+				// 从哪些chunk中提取
+				chunks: ['a', 'b'],
+				// 提取出的公共部分形成一个新的chunk，这个新的chunk的名称
+				name: 'common'
+			})
+		以上配置能从网页A和网页B中抽离出公共部分，放到common中。
+		每个CommonsChunkPlugin实例都会生成一个新的chunk,这个新chunk中包含了被提取出来的代码，在使用过程中必须制定name属性，以告诉插件新生成的chunk的名称。
+		其中chunks属性指明从哪些已有的chunk中提取，如果步天下该属性，则默认会从所有已知的chunk中提取。
+		
+		Chunk是一系列文件的集合，一个chunk中会包含这个chunk的入口文件和入口文件所依赖的文件。
+
+		通过以上配置输出的common chunk中会包含所有页面都依赖的基础运行库react、react-dom,为了把基础运行库从common中提取到base中去，还需要做一些处理。
+		首先需要先配置chunk，这个chunk中只依赖所有页面都依赖的基础库以及所有页面都使用的样式，为此需要在项目里写一个文件base.js来描述base chunk所依赖的模块，文件内容如下：
+		// 所有页面都依赖的基础库
+		import 'react';
+		import 'react-dom';
+		// 所有页面都依赖的样式
+		import './base.css';
+		接着再修改 Webpack 配置，在 entry 中加入 base，相关修改如下：
+		module.exports = {
+			entry: {
+				base: './base.js'
+			},
+		};
+		以上就完成了对新 Chunk base 的配置。
+		为了从 common 中提取出 base 也包含的部分，还需要配置一个 CommonsChunkPlugin，相关代码如下：
+
+		new CommonsChunkPlugin({
+			// 从 common 和 base 两个现成的 Chunk 中提取公共的部分
+			chunks: ['common', 'base'],
+			// 把公共的部分放到 base 中
+			name: 'base'
+		})
+		由于 common 和 base 公共的部分就是 base 目前已经包含的部分，所以这样配置后 common 将会变小，而 base 将保持不变。
+
+		以上都配置好后重新执行构建，你将会得到四个文件，它们分别是：
+
+		base.js：所有网页都依赖的基础库组成的代码；
+		common.js：网页A、B都需要的，但又不在 base.js 文件中出现过的代码；
+		a.js：网页 A 单独需要的代码；
+		b.js：网页 B 单独需要的代码。
+		为了让网页正常运行，以网页 A 为例，你需要在其 HTML 中按照以下顺序引入以下文件才能让网页正常运行：
+				<script src="base.js"></script>
+				<script src="common.js"></script>
+				<script src="a.js"></script>
+		以上就完成了提取公共代码需要的所有步骤。
+
+		针对 CSS 资源，以上理论和方法同样有效，也就是说你也可以对 CSS 文件做同样的优化。
+
+		以上方法可能会出现 common.js 中没有代码的情况，原因是去掉基础运行库外很难再找到所有页面都会用上的模块。 在出现这种情况时，你可以采取以下做法之一：
+
+		CommonsChunkPlugin 提供一个选项 minChunks，表示文件要被提取出来时需要在指定的 Chunks 中最小出现最小次数。 假如 minChunks=2、chunks=['a','b','c','d']，
+		任何一个文件只要在 ['a','b','c','d'] 中任意两个以上的 Chunk 中都出现过，这个文件就会被提取出来。 你可以根据自己的需求去调整 minChunks 的值，minChunks 越小越多的文件会被提取到 common.js 中去，
+		但这也会导致部分页面加载的不相关的资源越多； minChunks 越大越少的文件会被提取到 common.js 中去，但这会导致 common.js 变小、效果变弱。
+		根据各个页面之间的相关性选取其中的部分页面用 CommonsChunkPlugin 去提取这部分被选出的页面的公共部分，而不是提取所有页面的公共部分，而且这样的操作可以叠加多次。
+		 这样做的效果会很好，但缺点是配置复杂，你需要根据页面之间的关系去思考如何配置，该方法不通用。
+
+2.10 按需加载
+	2.10.1 为什么需要按需加载
+		随着互联网的发展，一个网页需要承载的功能越来越多，对于采用单页应用作为前端架构的网站来说，会面临着一个网页需要加载的代码量很大的问题，因为许多功能都集中的做到了一个html里。这会导致网页加载缓慢，交互卡顿/
+		用户体验将非常糟糕；
+		导致这个问题的根本原因就在于一次性的加载所有功能对应的代码，但其实用户每个阶段只可能使用其中一部分功能。所以解决这个问题的方法就是用户当前需要用什么功能就只加载这个功能对应的代码，也就是所谓的按需加载。
+
+	2.10.2 如何使用按需加载
+		在给单页应用做按需加载优化时，一般采用以下原则：
+			· 把整个网站划分为一个个小功能，再按照每个功能的相关诚度把它们分成几类‘
+			· 把每一类合并为一个chunk,按需加载对应的 Chunk。
+			· 对于用户首次打开你的网站时需要看到的画面所对应的功能，不要对它们做按需加载，而是放到执行入口所在的 Chunk 中，以降低用户能感知的网页加载时间。
+			· 对于个别依赖大量代码的功能点，例如依赖 Chart.js 去画图表、依赖 flv.js 去播放视频的功能点，可再对其进行按需加载。
+		被分割出去的代码的加载需要一定的时机去触发，也就是当用户操作到了或者即将操作到对应的功能时再去加载对应的代码。 被分割出去的代码的加载时机需要开发者自己去根据网页的需求去衡量和确定。
+		由于被分割出去进行按需加载的代码在加载的过程中也需要耗时，你可以预言用户接下来可能会进行的操作，并提前加载好对应的代码，从而让用户感知不到网络加载时间。
+	
+	2.10.3 用webpack实现按需加载
+		webpack内置了强大的分割代码的功能去实现按需加载，实现起来非常简单。
+		举个例子，现在需要做这样一个进行了按需加载优化的网页：
+			· 网页首次加载时只加载 main.js 文件，网页会展示一个按钮，main.js 文件中只包含监听按钮事件和加载按需加载的代码。
+			· 当按钮被点击时才去加载被分割出去的 show.js 文件，加载成功后再执行 show.js 里的函数。
+		其中main.js文件内容如下：
+		window.document.getElementById('btn').addEventListener('click', function () {
+		// 当按钮被点击后才去加载 show.js 文件，文件加载成功后执行文件导出的函数
+			import(/* webpackChunkName: "show" */ './show').then(show => {
+				show('Webpack');
+			});
+		});
+
+		show.js文件内容如下：
+			module.exports = function (content) {
+				window.alert('hello' + content);
+			}
+		代码中最关键的一句时import(/* webpackChunkName: "show" */ './show'),webpack内置了对import(*)语句的支持，当webpack遇到了类似的语句时会这样处理：
+			· 以./show.js为入口新生成一个Chunk;
+			· 当代码执行到import所在的语句时才会去加载由chunk对应生成的文件。
+			· import返回一个Promise，当文件加载成功时可以再Promise的then方法中获取到show.js导出的内容。
+		在使用import() 分割代码后，你的浏览器并且要支持Promise API 才能让代码正常运行，因为import()返回一个Promise， 它以来Promise。对于不愿生支持Promise的浏览器，你可以注入Promise polyfill。
+		
+		/* webpackChunkName: "show" */ 的含义是为动态生成的chunk赋予一个名称，以方便我们追踪和调试代码。如果不指定动态生成的chunk名称，默认名称将会是[id].js。
+		/* webpackChunkName: "show" */ 是在webpack3中引入的新特性，在webpack3之前是无法为动态生成的chunk赋予名称的。
+
+		为了正确的输出在/* webpackChunkName: "show" */中配置chunkName, 还需要配置下webpack,配置如下：
+		module.exports = {
+			entry: {
+				main: './main.js'
+			},
+			output: {
+				// 为从entry中配置生成的chunk配置输出文件的名称
+				filename: '[name].js',
+				// 为动态加载的chunk配置输出文件的名称
+				chunkFilename: '[name].js'
+			}
+		};
+		其中最关键的一行是chunkFilename: '[name].js', 它专门指定动态生成的chunk在输出时的文件名称。
+		如果没有这行，分割出的代码的文件名称将会是[id].js。
+
+	2.10.4 按需加载与ReactRouter
+		在实战中，在实战中，不可能会有上面那么简单的场景，接下来举一个实战中的例子：对采用了 ReactRouter 的应用进行按需加载优化。 
+		这个例子由一个单页应用构成，这个单页应用由两个子页面构成，通过 ReactRouter 在两个子页面之间切换和管理路由。
+		这个单页应用的入口文件 main.js 如下：
+		import React, {PureComponent, createElement} from 'react';
+		import {render} from 'react-dom';
+		import {HashRouter, Route, Link} from 'react-router-dom';
+		import PageHome from './pages/home';
+
+		/**
+		* 异步加载组件
+		* @param load 组件加载函数，load 函数会返回一个 Promise，在文件加载完成时 resolve
+		* @returns {AsyncComponent} 返回一个高阶组件用于封装需要异步加载的组件
+		*/
+		function getAsyncComponent(load) {
+			return class AsyncComponent extends PureComponent {
+
+				componentDidMount() {
+				// 在高阶组件 DidMount 时才去执行网络加载步骤
+				load().then(({default: component}) => {
+					// 代码加载成功，获取到了代码导出的值，调用 setState 通知高阶组件重新渲染子组件
+					this.setState({
+					component,
+					})
+				});
+				}
+
+				render() {
+				const {component} = this.state || {};
+				// component 是 React.Component 类型，需要通过 React.createElement 生产一个组件实例
+				return component ? createElement(component) : null;
+				}
+			}
+		}
+		// 根组件
+		function App() {
+			return (
+				<HashRouter>
+				<div>
+					<nav>
+					<Link to='/'>Home</Link> | <Link to='/about'>About</Link> | <Link to='/login'>Login</Link>
+					</nav>
+					<hr/>
+					<Route exact path='/' component={PageHome}/>
+					<Route path='/about' component={getAsyncComponent(
+					// 异步加载函数，异步地加载 PageAbout 组件
+					() => import(/* webpackChunkName: 'page-about' */'./pages/about')
+					)}
+					/>
+					<Route path='/login' component={getAsyncComponent(
+					// 异步加载函数，异步地加载 PageAbout 组件
+					() => import(/* webpackChunkName: 'page-login' */'./pages/login')
+					)}
+					/>
+				</div>
+				</HashRouter>
+			)
+		}
+
+		// 渲染根组件
+		render(<App/>, window.document.getElementById('app'));
+		以上代码中最关键的部分是 getAsyncComponent 函数，它的作用是配合 ReactRouter 去按需加载组件，具体含义请看代码中的注释。
+
+		由于以上源码需要通过 Babel 去转换后才能在浏览器中正常运行，需要在 Webpack 中配置好对应的 babel-loader，
+		源码先交给 babel-loader 处理后再交给 Webpack 去处理其中的 import(*) 语句。 但这样做后你很快会发现一个问题：Babel 报出错误说不认识 import(*) 语法。 
+		导致这个问题的原因是 import(*) 语法还没有被加入到在 3-1使用ES6语言中提到的 ECMAScript 标准中去， 为此我们需要安装一个 Babel 插件 babel-plugin-syntax-dynamic-import，并且将其加入到 .babelrc 中去：
+
+		{
+		"presets": [
+			"env",
+			"react"
+		],
+		"plugins": [
+			"syntax-dynamic-import"
+		]
+		}
+		执行 Webpack 构建后，你会发现输出了三个文件：
+
+		main.js：执行入口所在的代码块，同时还包括 PageHome 所需的代码，因为用户首次打开网页时就需要看到 PageHome 的内容，所以不对其进行按需加载，以降低用户能感知到的加载时间；
+		page-about.js：当用户访问 /about 时才会加载的代码块；
+		page-login.js：当用户访问 /login 时才会加载的代码块。
+		同时你还会发现 page-about.js 和 page-login.js 这两个文件在首页是不会加载的，而是会当你切换到了对应的子页面后文件才会开始加载。
+
+	2.10.5 使用Prepack
+		在前面的优化方法中提到了代码压缩和分块，这些都是在网络加载层面的优化，除此之外还可以优化代码在运行时的效率，Prepack 就是为此而生。
+
+		Prepack 由 Facebook 开源，它采用较为激进的方法：在保持运行结果一致的情况下，改变源代码的运行逻辑，输出性能更高的 JavaScript 代码。
+		实际上 Prepack 就是一个部分求值器，编译代码时提前将计算结果放到编译后的代码中，而不是在代码运行时才去求值。
+
+		以如下源码为例：
+
+		import React, {Component} from 'react';
+		import {renderToString} from 'react-dom/server';
+
+		function hello(name) {
+			return 'hello ' + name;
+		}
+
+		class Button extends Component {
+			render() {
+				return hello(this.props.name);
+			}
+		}
+		console.log(renderToString(<Button name='webpack'/>));
+		被 Prepack 转化后竟然直接输出如下：
+
+		console.log("hello webpack");
+
+		可以看出 Prepack 通过在编译阶段预先执行了源码得到执行结果，再直接把运行结果输出来以提升性能。
+		Prepack 的工作原理和流程大致如下：
+
+		通过 Babel 把 JavaScript 源码解析成抽象语法树（AST），以方便更细粒度地分析源码；
+		Prepack 实现了一个 JavaScript 解释器，用于执行源码。借助这个解释器 Prepack 才能掌握源码具体是如何执行的，并把执行过程中的结果返回到输出中。
+		从表面上看去这似乎非常美好，但实际上 Prepack 还不够成熟与完善。Prepack 目前还处于初期的开发阶段，局限性也很大，例如：
+
+		不能识别 DOM API 和 部分 Node.js API，如果源码中有调用依赖运行环境的 API 就会导致 Prepack 报错；
+		存在优化后的代码性能反而更低的情况；
+		存在优化后的代码文件尺寸大大增加的情况。
+		总之，现在把 Prepack 用于线上环境还为时过早。
+
+		接入 Webpack
+		Prepack 需要在 Webpack 输出最终的代码之前，对这些代码进行优化，就像 UglifyJS 那样。 因此需要通过新接入一个插件来为 Webpack 接入 Prepack，幸运的是社区中已经有人做好了这个插件：prepack-webpack-plugin。
+
+		接入该插件非常简单，相关配置代码如下：
+
+		const PrepackWebpackPlugin = require('prepack-webpack-plugin').default;
+
+		module.exports = {
+			plugins: [
+				new PrepackWebpackPlugin()
+			]
+		};
+		重新执行构建你就会看到输出的被 Prepack 优化后的代码。
+	
+	2.10.6 输出分析
+	前面虽然介绍了非常多的优化方法，但这些方法也无法涵盖所有的场景，为此你需要对输出结果做分析，以决定下一步的优化方向。
+
+	最直接的分析方法就是去阅读 Webpack 输出的代码，但由于 Webpack 输出的代码可读性非常差而且文件非常大，这会让你非常头疼。
+	为了更简单直观的分析输出结果，社区中出现了许多可视化的分析工具。这些工具以图形的方式把结果更加直观的展示出来，让你快速看到问题所在。 接下来教你如何使用这些工具。
+
+	在启动 Webpack 时，支持两个参数，分别是：
+
+	--profile：记录下构建过程中的耗时信息；
+	--json：以 JSON 的格式输出构建结果，最后只输出一个 .json 文件，这个文件中包括所有构建相关的信息。
+	在启动 Webpack 时带上以上两个参数，启动命令如下 webpack --profile --json > stats.json，你会发现项目中多出了一个 stats.json 文件。 这个 stats.json 文件是给后面介绍的可视化分析工具使用的。
+
+	2.10.6 优化总结
+	本章从开发体验和输出质量两个角度讲解了如何优化项目中的 Webpack 配置，这些优化的方法都是来自项目实战中的经验积累。 虽然每一小节都是一个个独立的优化方法，但是有些优化方法并不冲突可以相互组合，以达到最佳的效果。
+
+	以下将给出是结合了本章所有优化方法的实例项目，由于构建速度和输出质量不能兼得，按照开发环境和线上环境为该项目配置了两份文件，分别如下：
+
+	侧重优化开发体验的配置文件webpack.config.js:
+
+	const path = require('path');
+	const CommonsChunkPlugin = require('webpack/ib/optimize/CommonsChunkPlugin');
+	const { AutoWebPlugin } = require('web-webpack-plugin');
+	const HappyPack = require('happypack');
+
+	const autoWebPlugin = new AutoWebPlugin('./src/pages', {
+		// html 模板文件所在的文件路径
+		template: './template.html',
+		commonsChunk: {
+			// 提取公共代码chunk的名称
+			name: 'common',
+		}
+	});
+	module.exports = {
+		entry: autoWebPlugin.entry({
+			base: './src/base.js'
+		}),
+		output: {
+			filename: '[name].js'
+		},
+		resolve: {
+			// 使用绝对路径指明第三方模块错放的位置，以减少搜索步骤
+			// 其中__dirname表示当前工作目录，也就是项目根目录
+			modules: [path.resolve(__dirname, 'node_modules')],
+			// 针对npm中的第三方模块优先采用jsnext:main中指向的es6模块话语法的文件，使用Tree Shaking优化
+			// 只采用main字段作为入口文件描述字段，以减少搜索步骤
+			mainFields: ['jsnext:main', 'main']
+		},
+		module: {
+			rules: [
+				{
+					test: /\.js$/,
+					use: ['happypack/loader?id=babel'],
+					include: path.resolve(__dirname, 'src')
+				},
+				{
+					test: /\.js$/,
+					use: ['happypack/loader?id=ui-component'],
+					include: path.resolve(__dirname, 'src')
+				},
+				{
+					test: /\.css$/,
+					use: ['happypack/loader?id=css']
+				}
+			]
+		},
+		plugins: [
+			autoWebPlugin,
+			new HappyPack({
+				id: 'babel',
+				loaders: ['babel-loader?cacheDirectory']
+			}),
+			new HappyPack({
+				id: 'ui-component',
+				loaders: [
+					{
+						loader: 'ui-componnet-loader',
+						options: {
+							lib: 'antd',
+							style: 'style/index.css',
+							camel2: '-'
+						}
+					}
+				]
+			}),
+			new HappyPack({
+				id: 'css',
+				loaders: ['style-loader', 'css-loader']
+			}),
+			new CommonsChunkPlugin({
+				chunks: ['common', 'base'],
+				name: 'base'
+			})
+		],
+		watchOptions: {
+			// 使用自动刷新，不监听node_modules目录下的文件
+			ignored: /node_modules/
+		}
+	};
